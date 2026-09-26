@@ -1,1 +1,974 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>World Explorer - Jelajah 6 Benua</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
+    <!-- Canvas Confetti -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;900&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: 'Nunito', sans-serif;
+            background-color: #f0f9ff;
+            overscroll-behavior: none;
+        }
+        .globe-spin {
+            animation: spin 20s linear infinite;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        
+        .float-anim {
+            animation: float 3s ease-in-out infinite;
+        }
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+            100% { transform: translateY(0px); }
+        }
+
+        .plane-anim {
+            animation: fly 10s linear infinite;
+        }
+        @keyframes fly {
+            0% { transform: translate(-50px, 0) rotate(15deg); }
+            50% { transform: translate(150px, -20px) rotate(0deg); }
+            100% { transform: translate(350px, 0) rotate(-15deg); opacity: 0;}
+        }
+
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            border: 4px solid rgba(255, 255, 255, 0.5);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        }
+
+        .continent-btn {
+            transition: all 0.2s;
+        }
+        .continent-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body class="text-slate-800 h-screen w-screen overflow-hidden">
+    <div id="root" class="h-full w-full"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Sound Synthesis (Offline friendly)
+        const playSound = (type) => {
+            if (!window.soundEnabled) return;
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+
+            if (type === 'correct') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(440, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.1);
+                gain.gain.setValueAtTime(0.5, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+                osc.start(); osc.stop(ctx.currentTime + 0.5);
+            } else if (type === 'wrong') {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(300, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(150, ctx.currentTime + 0.2);
+                gain.gain.setValueAtTime(0.5, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+                osc.start(); osc.stop(ctx.currentTime + 0.5);
+            } else if (type === 'click') {
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(600, ctx.currentTime);
+                gain.gain.setValueAtTime(0.1, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+                osc.start(); osc.stop(ctx.currentTime + 0.1);
+            }
+        };
+
+        const AVATARS = [
+            { id: 'a1', icon: '👨‍🚀', name: 'Astronaut' },
+            { id: 'a2', icon: '👩‍🔬', name: 'Ilmuwan' },
+            { id: 'a3', icon: '🧭', name: 'Penjelajah' },
+            { id: 'a4', icon: '👨‍🏫', name: 'Profesor' },
+            { id: 'a5', icon: '👩‍🚀', name: 'Astronaut (P)' },
+            { id: 'a6', icon: '🧗', name: 'Petualang' },
+            { id: 'a7', icon: '🐧', name: 'Penguin Explorer' },
+            { id: 'a8', icon: '🐻‍❄️', name: 'Polar Explorer' }
+        ];
+
+        const BANK_SOAL = [
+            // Asia
+            { q: "Benua manakah yang memiliki luas wilayah terbesar di dunia?", options: ["Afrika", "Amerika", "Asia", "Eropa"], answer: 2, exp: "Asia adalah benua terbesar di dunia, baik dari segi luas wilayah maupun jumlah penduduk." },
+            { q: "Gunung tertinggi di dunia yang terletak di Benua Asia adalah...", options: ["Gunung Kilimanjaro", "Gunung Everest", "Gunung Elbrus", "Pegunungan Andes"], answer: 1, exp: "Gunung Everest berada di Pegunungan Himalaya, Asia, dan merupakan puncak tertinggi di Bumi." },
+            { q: "Negara manakah yang TIDAK terletak di Benua Asia?", options: ["Jepang", "India", "Brasil", "Indonesia"], answer: 2, exp: "Brasil terletak di Benua Amerika Selatan." },
+            { q: "Benua Asia memiliki penduduk terbanyak. Salah satu negara terpadat di Asia adalah...", options: ["Tiongkok (China)", "Rusia", "Kanada", "Australia"], answer: 0, exp: "Tiongkok dan India adalah negara dengan penduduk terbanyak di Asia dan dunia." },
+            { q: "Benua Asia dan Eropa sebenarnya menyatu dan sering disebut sebagai...", options: ["Oseania", "Eurasia", "Pangea", "Antarktika"], answer: 1, exp: "Eurasia adalah gabungan daratan Eropa dan Asia." },
+            
+            // Afrika
+            { q: "Gurun pasir terluas di dunia yang membentang di Afrika Utara adalah...", options: ["Gurun Gobi", "Gurun Sahara", "Gurun Kalahari", "Gurun Atacama"], answer: 1, exp: "Gurun Sahara sangat luas dan mendominasi bagian utara Afrika." },
+            { q: "Sungai terpanjang di dunia yang mengalir melintasi Benua Afrika adalah...", options: ["Sungai Amazon", "Sungai Yangtze", "Sungai Nil", "Sungai Mississippi"], answer: 2, exp: "Sungai Nil mengalir ke utara dan bermuara di Laut Tengah." },
+            { q: "Benua Afrika sering dijuluki sebagai 'Benua Hitam' karena...", options: ["Tanahnya berwarna hitam", "Cuacanya selalu gelap", "Belum banyak dipetakan pada masa lalu", "Banyak gunung berapi"], answer: 2, exp: "Julukan ini diberikan bangsa Eropa abad ke-19 karena sebagian besar wilayah Afrika belum dipetakan oleh mereka." },
+            { q: "Hewan mamalia darat terbesar yang merupakan hewan khas sabana Afrika adalah...", options: ["Beruang", "Harimau", "Gajah Afrika", "Kanguru"], answer: 2, exp: "Gajah Afrika hidup di padang rumput (sabana) yang luas di Afrika." },
+            { q: "Negara manakah yang terletak di ujung selatan Benua Afrika?", options: ["Mesir", "Afrika Selatan", "Maroko", "Kenya"], answer: 1, exp: "Afrika Selatan adalah negara yang terletak paling selatan di benua tersebut." },
+
+            // Eropa
+            { q: "Benua Eropa memiliki banyak negara dalam wilayah yang relatif kecil. Pegunungan terkenal yang melintasi beberapa negara Eropa adalah...", options: ["Himalaya", "Rocky", "Alpen", "Andes"], answer: 2, exp: "Pegunungan Alpen membentang melintasi Prancis, Swiss, Italia, hingga Austria." },
+            { q: "Batas alam yang memisahkan Benua Eropa dan Asia di sebelah timur adalah...", options: ["Laut Merah", "Pegunungan Ural", "Pegunungan Andes", "Sungai Nil"], answer: 1, exp: "Pegunungan Ural di Rusia dianggap sebagai batas tradisional antara Eropa dan Asia." },
+            { q: "Iklim di sebagian besar Benua Eropa dipengaruhi oleh...", options: ["Gurun pasir yang luas", "Arus laut hangat dari Samudra Atlantik", "Angin dingin dari Antarktika", "Letaknya di garis khatulistiwa"], answer: 1, exp: "Arus Teluk (Gulf Stream) membuat iklim Eropa lebih hangat dibanding wilayah lain di lintang yang sama." },
+            { q: "Manakah dari berikut ini yang BUKAN merupakan landmark/bangunan terkenal di Eropa?", options: ["Menara Eiffel", "Colosseum", "Taj Mahal", "Menara Pisa"], answer: 2, exp: "Taj Mahal terletak di India, yang merupakan bagian dari Benua Asia." },
+            { q: "Negara manakah yang wilayahnya berada di dua benua, yaitu Eropa dan Asia?", options: ["Inggris", "Turki", "Italia", "Jerman"], answer: 1, exp: "Turki dan Rusia memiliki wilayah yang membentang di Eropa dan Asia." },
+
+            // Amerika
+            { q: "Benua Amerika membentang dari utara hingga selatan. Pegunungan panjang yang berada di pesisir barat Amerika Selatan adalah...", options: ["Pegunungan Rocky", "Pegunungan Himalaya", "Pegunungan Andes", "Pegunungan Alpen"], answer: 2, exp: "Pegunungan Andes adalah rangkaian pegunungan terpanjang di dunia." },
+            { q: "Sungai dengan volume air terbesar di dunia dan dikelilingi hutan hujan tropis lebat terletak di Amerika Selatan. Sungai tersebut adalah...", options: ["Sungai Nil", "Sungai Amazon", "Sungai Mississippi", "Sungai Colorado"], answer: 1, exp: "Hutan hujan Amazon dan Sungai Amazon adalah ekosistem yang sangat kaya dan luas." },
+            { q: "Amerika Utara terdiri dari negara-negara besar, salah satunya adalah...", options: ["Argentina", "Brasil", "Kanada", "Kolombia"], answer: 2, exp: "Amerika Serikat, Kanada, dan Meksiko adalah negara utama di Amerika Utara." },
+            { q: "Terusan yang dibangun untuk menghubungkan Samudra Atlantik dan Samudra Pasifik di Benua Amerika adalah...", options: ["Terusan Suez", "Terusan Panama", "Selat Bering", "Selat Malaka"], answer: 1, exp: "Terusan Panama memotong wilayah Amerika Tengah untuk memperpendek jalur pelayaran." },
+            { q: "Kondisi iklim di Benua Amerika sangat beragam. Hal ini disebabkan oleh...", options: ["Banyaknya gunung berapi", "Wilayahnya yang membujur sangat panjang dari utara ke selatan", "Banyaknya pulau kecil", "Kedekatannya dengan Benua Eropa"], answer: 1, exp: "Bentuk benua yang memanjang melewati berbagai garis lintang menciptakan beragam iklim, dari kutub hingga tropis." },
+
+            // Australia / Oseania
+            { q: "Benua terkecil di dunia yang juga merupakan sebuah negara adalah...", options: ["Eropa", "Antarktika", "Australia", "Amerika Selatan"], answer: 2, exp: "Australia adalah satu-satunya wilayah yang merupakan benua sekaligus satu negara utuh." },
+            { q: "Hewan berkantung (marsupial) sangat banyak ditemukan di Australia. Contoh hewan tersebut adalah...", options: ["Harimau", "Kanguru", "Singa", "Beruang"], answer: 1, exp: "Kanguru dan Koala adalah hewan endemik (khas) Australia." },
+            { q: "Sistem terumbu karang terbesar di dunia yang terletak di lepas pantai timur laut Australia adalah...", options: ["Raja Ampat", "Great Barrier Reef", "Segitiga Terumbu Karang", "Maladewa"], answer: 1, exp: "Great Barrier Reef sangat besar hingga dapat terlihat dari luar angkasa." },
+            { q: "Wilayah Oseania sebagian besar terdiri dari...", options: ["Gurun pasir", "Pegunungan es", "Ribuan pulau di Samudra Pasifik", "Hutan hujan tropis yang menyatu"], answer: 2, exp: "Oseania mencakup Australia, Selandia Baru, dan banyak pulau kecil di Pasifik." },
+            { q: "Sebagian besar wilayah pedalaman Benua Australia berupa...", options: ["Hutan lebat", "Gurun dan wilayah kering (Outback)", "Pegunungan tinggi bersalju", "Danau-danau besar"], answer: 1, exp: "Kawasan pedalaman Australia yang kering sering disebut sebagai Outback." },
+
+            // Antarktika
+            { q: "Benua manakah yang permukaannya hampir seluruhnya tertutup oleh lapisan es tebal?", options: ["Asia", "Eropa", "Antarktika", "Amerika Utara"], answer: 2, exp: "Lebih dari 98% wilayah Antarktika tertutup es." },
+            { q: "Mengapa Benua Antarktika tidak memiliki penduduk tetap (asli)?", options: ["Karena suhu yang sangat ekstrem dingin", "Karena tidak ada daratan", "Karena hewan buas terlalu banyak", "Karena dilarang oleh PBB"], answer: 0, exp: "Suhu yang sangat dingin dan cuaca ekstrem membuat manusia sulit menetap secara permanen." },
+            { q: "Siapa yang paling banyak tinggal sementara di Benua Antarktika saat ini?", options: ["Turis", "Ilmuwan dan peneliti", "Penduduk asli (Inuit)", "Penambang es"], answer: 1, exp: "Banyak negara mendirikan stasiun penelitian di Antarktika untuk meneliti cuaca, iklim, dan geologi." },
+            { q: "Hewan yang sangat terkenal dan identik sebagai penghuni Benua Antarktika adalah...", options: ["Beruang kutub", "Singa laut", "Penguin", "Rubah salju"], answer: 2, exp: "Penguin hidup berkoloni di pesisir Antarktika. Mereka beradaptasi dengan suhu dingin ekstrem." },
+            { q: "Antarktika merupakan benua yang unik karena...", options: ["Menjadi benua terpanas di musim panas", "Menjadi benua paling dingin, kering, dan berangin di dunia", "Hanya terdiri dari air yang membeku tanpa daratan", "Memiliki hutan pinus terluas"], answer: 1, exp: "Meski penuh es, Antarktika sebenarnya adalah gurun karena curah hujannya sangat rendah." },
+
+            // Kutub Utara (Arktik)
+            { q: "Sebagian besar wilayah Kutub Utara (Arktik) berupa...", options: ["Benua yang luas", "Gurun pasir", "Samudra yang permukaannya membeku", "Pegunungan berbatu"], answer: 2, exp: "Berbeda dengan Antarktika yang berupa daratan, Arktik sebagian besar adalah Samudra Arktik yang tertutup es laut." },
+            { q: "Hewan pemangsa besar yang menjadi ikon Kutub Utara adalah...", options: ["Penguin Emperor", "Beruang Kutub", "Singa", "Kanguru"], answer: 1, exp: "Beruang kutub berburu di atas lapisan es laut Arktik." }
+        ];
+
+        const MATERI_DATA = {
+            "Benua Asia": {
+                title: "🌏 Benua Asia",
+                image: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/80/Asia_%28orthographic_projection%29.svg/600px-Asia_%28orthographic_projection%29.svg.png",
+                caption: "Peta Projeksi Benua Asia",
+                content: "Asia adalah benua terbesar dan paling padat penduduknya di dunia. Memiliki keanekaragaman budaya, sejarah peradaban tua, serta bentang alam megah.",
+                points: [
+                    "Luas wilayah: ~44,58 juta km² (Benua Terluas)",
+                    "Populasi: Lebih dari 4,7 miliar jiwa",
+                    "Puncak Tertinggi: Gunung Everest (8.848 mdpl)",
+                    "Sungai Terpanjang: Sungai Yangtze (Tiongkok)"
+                ],
+                extraInfo: "💡 Fakta Unik: Benua Asia dan Eropa sebenarnya berada pada satu daratan raksasa yang disebut Eurasia."
+            },
+            "Benua Afrika": {
+                title: "🌍 Benua Afrika",
+                image: "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0f/Africa_%28orthographic_projection%29.svg/600px-Africa_%28orthographic_projection%29.svg.png",
+                caption: "Peta Projeksi Benua Afrika",
+                content: "Afrika terkenal dengan Gurun Sahara yang membentang di bagian utara, Sungai Nil yang legendaris, serta keanekaragaman fauna sabana yang melimpah.",
+                points: [
+                    "Luas wilayah: ~30,37 juta km²",
+                    "Gurun Terluas: Gurun Sahara",
+                    "Sungai Terpanjang: Sungai Nil (6.650 km)",
+                    "Fauna khas: Gajah Afrika, Singa, Jerapah, Zebra"
+                ],
+                extraInfo: "💡 Julukan: Afrika sering dijuluki 'Benua Hitam' karena belum banyak terpetakan pada masa kolonial Eropa."
+            },
+            "Benua Amerika": {
+                title: "🌎 Benua Amerika",
+                image: "https://upload.wikimedia.org/wikipedia/commons/thumb/4/43/North_America_%28orthographic_projection%29.svg/600px-North_America_%28orthographic_projection%29.svg.png",
+                caption: "Peta Projeksi Benua Amerika",
+                content: "Membentang sangat panjang dari kutub utara hingga kutub selatan, terbagi menjadi Amerika Utara, Amerika Tengah, dan Amerika Selatan.",
+                points: [
+                    "Pegunungan Terpanjang: Pegunungan Andes (Amerika Selatan)",
+                    "Hutan Hujan Terbesar: Hutan Hujan Amazon",
+                    "Sungai Terbesar: Sungai Amazon (Volume Air)",
+                    "Terusan Penting: Terusan Panama"
+                ],
+                extraInfo: "💡 Keanekaragaman Iklim: Karena membujur panjang, Amerika memiliki seluruh jenis iklim utama di dunia."
+            },
+            "Benua Eropa": {
+                title: "🏰 Benua Eropa",
+                image: "https://upload.wikimedia.org/wikipedia/commons/thumb/4/44/Europe_orthographic_crop.svg/600px-Europe_orthographic_crop.svg.png",
+                caption: "Peta Projeksi Benua Eropa",
+                content: "Benua dengan sejarah peradaban dan sains yang berkembang pesat. Memiliki negara-negara dengan wilayah yang relatif kecil namun padat.",
+                points: [
+                    "Batas Alam: Pegunungan Ural di sebelah timur",
+                    "Pegunungan Terkenal: Pegunungan Alpen",
+                    "Pengaruh Iklim: Arus hangat Gulf Stream dari Atlantik",
+                    "Landmark Terkenal: Menara Eiffel, Colosseum, Menara Pisa"
+                ],
+                extraInfo: "💡 Julukan: Eropa sering dijuluki 'Benua Biru' karena mayoritas penduduknya bermata biru dan kebangsawanannya."
+            },
+            "Australia & Oseania": {
+                title: "🦘 Australia & Oseania",
+                image: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8e/Oceania_%28orthographic_projection%29.svg/600px-Oceania_%28orthographic_projection%29.svg.png",
+                caption: "Peta Projeksi Australia & Oseania",
+                content: "Benua terkecil di dunia yang sebagian besar daratannya ditempati oleh satu negara (Australia) serta ribuan pulau di Pasifik.",
+                points: [
+                    "Satwa Endemik: Kanguru, Koala, Platipus",
+                    "Terumbu Karang: Great Barrier Reef",
+                    "Kawasan Kering: Wilayah pedalaman yang disebut Outback",
+                    "Luas wilayah: ~8,52 juta km²"
+                ],
+                extraInfo: "💡 Unik: Australia adalah satu-satunya benua yang seluruh wilayah daratan utamanya merupakan satu negara."
+            },
+            "Benua Antarktika": {
+                title: "❄️ Benua Antarktika",
+                image: "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f2/Antarctica_%28orthographic_projection%29.svg/600px-Antarctica_%28orthographic_projection%29.svg.png",
+                caption: "Peta Projeksi Benua Antarktika",
+                content: "Benua paling selatan yang permukaannya hampir seluruhnya tertutup es tebal. Merupakan benua terdingin, terkeriing, dan paling berangin.",
+                points: [
+                    "Kondisi: >98% tertutup lapisan es tebal",
+                    "Penduduk: Tidak ada penduduk asli/tetap (hanya ilmuwan)",
+                    "Satwa Khas: Penguin, Anjing Laut, Burung Petrel",
+                    "Status: Kawasan konservasi dan riset internasional"
+                ],
+                extraInfo: "💡 Fakta Es: Antarktika menyimpan sekitar 70% cadangan air tawar dunia dalam bentuk es!"
+            },
+            "Kutub Utara (Arktik)": {
+                title: "🧊 Kutub Utara (Arktik)",
+                image: "https://upload.wikimedia.org/wikipedia/commons/thumb/2/20/Arctic_ocean_location_map.svg/600px-Arctic_ocean_location_map.svg.png",
+                caption: "Peta Kawasan Samudra Arktik",
+                content: "Kawasan di sekitar Kutub Utara yang sebagian besar berupa Samudra Arktik dengan permukaan es laut yang membeku.",
+                points: [
+                    "Bentuk Wilayah: Samudra beres (bukan daratan benua tunggal)",
+                    "Satwa Khas: Beruang Kutub (Polar Bear), Walrus, Rubah Arktik",
+                    "Fenomena Alam: Aurora Borealis & Matahari Tengah Malam",
+                    "Suhu: Sangat dingin dengan tutupan es yang dinamis"
+                ],
+                extraInfo: "💡 Beruang vs Penguin: Beruang Kutub hanya ada di Kutub Utara (Arktik), sedangkan Penguin hidup di Kutub Selatan (Antarktika)!"
+            }
+        };
+
+        const FloatingNav = ({ view, setView, soundEnabled, setSoundEnabled, playSound }) => {
+            return (
+                <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
+                    <button 
+                        onClick={() => {
+                            const next = !soundEnabled;
+                            setSoundEnabled(next);
+                            if (next) playSound('click');
+                        }}
+                        className="bg-white/90 backdrop-blur-md p-3 rounded-2xl shadow-lg border-2 border-slate-200 hover:bg-white text-xl transition"
+                        title={soundEnabled ? "Matikan Suara" : "Nyalakan Suara"}
+                    >
+                        {soundEnabled ? '🔊' : '🔇'}
+                    </button>
+                    {view !== 'home' && (
+                        <button 
+                            onClick={() => { playSound('click'); setView('home'); }}
+                            className="bg-white/90 backdrop-blur-md px-4 py-3 rounded-2xl shadow-lg border-2 border-slate-200 hover:bg-white font-bold text-slate-700 transition flex items-center gap-2 text-sm md:text-base"
+                        >
+                            🏠 Home
+                        </button>
+                    )}
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [view, setView] = useState('home'); // home, materi, setup, game, waiting, leaderboard
+            const [soundEnabled, setSoundEnabled] = useState(true);
+            const [gameMode, setGameMode] = useState(null); // SOLO, DUEL, SQUAD
+            const [players, setPlayers] = useState([]);
+            const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0);
+            const [materiExplored, setMateriExplored] = useState(new Set());
+            const [selectedMateri, setSelectedMateri] = useState(null);
+
+            const [formPlayers, setFormPlayers] = useState(Array(4).fill({name: '', avatarId: AVATARS[0].id}));
+
+            // Sync global audio flag
+            useEffect(() => { window.soundEnabled = soundEnabled; }, [soundEnabled]);
+
+            // Utility to shuffle array
+            const shuffle = (array) => {
+                let currentIndex = array.length, randomIndex;
+                while (currentIndex !== 0) {
+                    randomIndex = Math.floor(Math.random() * currentIndex);
+                    currentIndex--;
+                    [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
+                }
+                return array;
+            };
+
+            const startGame = (setupPlayers) => {
+                const initializedPlayers = setupPlayers.map(p => {
+                    const shuffledQuestions = shuffle([...BANK_SOAL]).slice(0, 15);
+                    
+                    const processedQuestions = shuffledQuestions.map(q => {
+                        const ops = [...q.options];
+                        const correctAnswerString = ops[q.answer];
+                        const shuffledOps = shuffle([...ops]);
+                        const newAnswerIndex = shuffledOps.indexOf(correctAnswerString);
+                        
+                        return { ...q, options: shuffledOps, answer: newAnswerIndex };
+                    });
+
+                    return {
+                        ...p,
+                        score: 0,
+                        correctCount: 0,
+                        wrongCount: 0,
+                        currentQIndex: 0,
+                        questions: processedQuestions,
+                        isFinished: false,
+                        feedback: null
+                    };
+                });
+
+                setPlayers(initializedPlayers);
+                setCurrentPlayerIndex(0);
+                setView('game');
+                playSound('click');
+            };
+
+            const triggerConfetti = () => {
+                confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+            };
+
+            const renderView = () => {
+                if (view === 'home') {
+                    return (
+                        <div className="flex flex-col items-center justify-center h-full relative overflow-y-auto overflow-x-hidden bg-gradient-to-b from-sky-400 to-blue-600 text-white p-4 py-12 md:p-8">
+                            <div className="relative mb-8 float-anim shrink-0">
+                                <div className="text-7xl md:text-9xl globe-spin">🌍</div>
+                                <div className="absolute -top-4 -left-8 text-3xl md:text-4xl plane-anim">✈️</div>
+                                <div className="absolute top-0 right-0 text-2xl md:text-3xl">⭐</div>
+                                <div className="absolute bottom-0 left-0 text-3xl md:text-4xl">❄️</div>
+                            </div>
+
+                            <h1 className="text-4xl md:text-6xl lg:text-7xl font-black mb-4 text-center drop-shadow-[0_4px_4px_rgba(0,0,0,0.3)] tracking-wider shrink-0">WORLD EXPLORER</h1>
+                            <p className="text-lg md:text-2xl mb-10 text-center drop-shadow-md shrink-0">"Jelajahi 6 Benua dan Rahasia Dunia Kutub!"</p>
+
+                            <div className="flex flex-col sm:flex-row gap-4 md:gap-6 w-full max-w-2xl shrink-0 z-10">
+                                <button 
+                                    onClick={() => { playSound('click'); setView('materi'); }}
+                                    className="flex-1 bg-amber-400 hover:bg-amber-300 text-slate-800 font-bold py-5 md:py-6 px-6 md:px-8 rounded-2xl shadow-[0_8px_0_#b45309] active:shadow-[0_0px_0_#b45309] active:translate-y-2 transition-all text-xl md:text-2xl flex items-center justify-center gap-3">
+                                    📚 MATERI
+                                </button>
+                                <button 
+                                    onClick={() => { playSound('click'); setGameMode(null); setView('setup'); }}
+                                    className="flex-1 bg-green-500 hover:bg-green-400 text-white font-bold py-5 md:py-6 px-6 md:px-8 rounded-2xl shadow-[0_8px_0_#15803d] active:shadow-[0_0px_0_#15803d] active:translate-y-2 transition-all text-xl md:text-2xl flex items-center justify-center gap-3">
+                                    🎮 GAMES
+                                </button>
+                            </div>
+                        </div>
+                    );
+                }
+
+                if (view === 'materi') {
+                    const keys = Object.keys(MATERI_DATA);
+                    
+                    return (
+                        <div className="flex flex-col h-full bg-slate-100 p-4 md:p-8">
+                            <div className="flex justify-between items-center mb-6">
+                                <button onClick={() => { playSound('click'); setView('home'); }} className="bg-white p-3 rounded-xl shadow-md hover:bg-slate-50 font-bold flex items-center gap-2">
+                                    🏠 KEMBALI
+                                </button>
+                                <h2 className="text-2xl md:text-3xl font-black text-slate-700">PETA PENGETAHUAN</h2>
+                                <div className="font-bold text-sky-600 bg-sky-100 py-2 px-4 rounded-xl">
+                                    Progres: {materiExplored.size}/{keys.length}
+                                </div>
+                            </div>
+
+                            {materiExplored.size === keys.length && (
+                                <div className="bg-green-100 border-l-4 border-green-500 p-4 mb-6 rounded shadow-sm flex items-center justify-between">
+                                    <p className="font-bold text-green-700">🎉 Selamat! Kamu telah menjelajahi seluruh materi!</p>
+                                    <button onClick={() => setView('setup')} className="bg-green-500 text-white px-4 py-2 rounded-lg font-bold hover:bg-green-600">🎮 COBA GAMES</button>
+                                </div>
+                            )}
+
+                            {/* Interactive Map Grid */}
+                            <div className="flex-1 overflow-y-auto">
+                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 max-w-5xl mx-auto pb-10">
+                                    {keys.map(key => (
+                                        <button 
+                                            key={key}
+                                            onClick={() => {
+                                                playSound('click');
+                                                setSelectedMateri(key);
+                                                setMateriExplored(prev => new Set(prev).add(key));
+                                            }}
+                                            className={`continent-btn p-4 md:p-6 rounded-2xl font-bold text-lg md:text-xl flex flex-col items-center justify-center gap-2 h-32 md:h-40 shadow-lg border-b-4 ${materiExplored.has(key) ? 'bg-sky-500 text-white border-sky-700' : 'bg-white text-slate-700 border-slate-300'}`}
+                                        >
+                                            <span className="text-3xl md:text-4xl">{MATERI_DATA[key].title.split(' ')[0]}</span>
+                                            <span className="text-center text-sm md:text-base leading-tight">{key}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Materi Modal */}
+                            {selectedMateri && (
+                                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 md:p-8 z-50 animate-fade-in">
+                                    <div className="bg-white rounded-3xl w-full max-w-5xl h-[95vh] md:h-auto md:max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+                                        {/* Modal Header */}
+                                        <div className="shrink-0 bg-gradient-to-r from-sky-500 to-blue-600 text-white p-4 md:p-6 flex justify-between items-center border-b-4 border-sky-700/30">
+                                            <h3 className="text-xl md:text-3xl font-black truncate pr-4">{MATERI_DATA[selectedMateri].title}</h3>
+                                            <button onClick={() => setSelectedMateri(null)} className="text-white hover:bg-white/20 rounded-full w-10 h-10 flex items-center justify-center text-2xl font-black transition shrink-0">&times;</button>
+                                        </div>
+                                        
+                                        {/* Split Screen Container */}
+                                        <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
+                                            {/* Gambar Realistis Kondisi Benua */}
+                                            {MATERI_DATA[selectedMateri].image && !MATERI_DATA[selectedMateri].isTable && (
+                                                <div className="w-full md:w-1/2 p-4 md:p-6 bg-slate-100 flex flex-col items-center justify-center border-b md:border-b-0 md:border-r border-slate-200 shrink-0 overflow-hidden">
+                                                    <div className="relative w-full h-48 sm:h-64 md:h-full max-h-[350px] rounded-2xl overflow-hidden shadow-md group">
+                                                        <img 
+                                                            src={MATERI_DATA[selectedMateri].image} 
+                                                            alt={MATERI_DATA[selectedMateri].title} 
+                                                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
+                                                        />
+                                                        {MATERI_DATA[selectedMateri].caption && (
+                                                            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 text-white text-xs md:text-sm font-semibold text-center">
+                                                                📷 {MATERI_DATA[selectedMateri].caption}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            
+                                            {/* Teks & Detail Materi */}
+                                            <div className={`w-full ${MATERI_DATA[selectedMateri].image && !MATERI_DATA[selectedMateri].isTable ? 'md:w-1/2' : 'w-full'} p-6 md:p-8 overflow-y-auto bg-white`}>
+                                                <p className="text-lg md:text-xl text-slate-700 mb-6 font-semibold leading-relaxed">
+                                                    {MATERI_DATA[selectedMateri].content}
+                                                </p>
+                                                
+                                                {MATERI_DATA[selectedMateri].points && (
+                                                    <ul className="space-y-3 md:space-y-4">
+                                                        {MATERI_DATA[selectedMateri].points.map((pt, i) => (
+                                                            <li key={i} className="flex gap-3 md:gap-4 text-slate-700 bg-sky-50/60 p-3 md:p-4 rounded-xl border border-sky-100 hover:shadow-md transition">
+                                                                <span className="text-sky-500 font-black text-xl shrink-0">✨</span>
+                                                                <span className="text-base md:text-lg leading-snug">{pt}</span>
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                )}
+
+                                                {MATERI_DATA[selectedMateri].isTable && (
+                                                    <div className="overflow-x-auto rounded-xl border border-slate-200 shadow-sm mt-4">
+                                                        <table className="w-full text-left border-collapse min-w-max">
+                                                            <thead>
+                                                                <tr className="bg-sky-100 text-sky-800">
+                                                                    {MATERI_DATA[selectedMateri].tableHeaders ? 
+                                                                        MATERI_DATA[selectedMateri].tableHeaders.map((h, i) => <th key={i} className="p-3 md:p-4 border-b-2 border-sky-200 text-base md:text-lg">{h}</th>) :
+                                                                        ['Benua', 'Ciri Utama', 'Contoh Alam'].map((h, i) => <th key={i} className="p-3 md:p-4 border-b-2 border-sky-200 text-base md:text-lg">{h}</th>)
+                                                                    }
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                {MATERI_DATA[selectedMateri].tableData.map((row, rIdx) => (
+                                                                    <tr key={rIdx} className="hover:bg-sky-50/50 border-b border-slate-100 transition">
+                                                                        {row.map((cell, cIdx) => <td key={cIdx} className={`p-3 md:p-4 text-slate-700 text-base md:text-lg ${cIdx === 0 ? 'font-black text-sky-700':''}`}>{cell}</td>)}
+                                                                    </tr>
+                                                                ))}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                )}
+
+                                                {MATERI_DATA[selectedMateri].extraInfo && (
+                                                    <div className="mt-8 bg-amber-100/80 border-l-8 border-amber-400 text-amber-900 p-5 md:p-6 rounded-xl font-bold text-base md:text-lg shadow-sm">
+                                                        {MATERI_DATA[selectedMateri].extraInfo}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Modal Footer */}
+                                        <div className="shrink-0 p-4 md:p-6 bg-slate-50 border-t border-slate-200 flex justify-end">
+                                             <button onClick={() => {
+                                                 playSound('click');
+                                                const idx = keys.indexOf(selectedMateri);
+                                                if(idx < keys.length - 1) {
+                                                    setSelectedMateri(keys[idx+1]);
+                                                    setMateriExplored(prev => new Set(prev).add(keys[idx+1]));
+                                                } else {
+                                                    setSelectedMateri(null);
+                                                }
+                                             }} className="bg-sky-500 hover:bg-sky-400 text-white font-black py-4 px-8 rounded-xl w-full md:w-auto shadow-[0_4px_0_#0284c7] active:shadow-none active:translate-y-1 transition-all text-lg">
+                                                 {keys.indexOf(selectedMateri) < keys.length - 1 ? 'LANJUT BACA ➡️' : '✅ SELESAI MEMBACA'}
+                                             </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    );
+                }
+
+                if (view === 'setup') {
+                    const numPlayers = gameMode === 'SOLO' ? 1 : gameMode === 'DUEL' ? 2 : gameMode === 'SQUAD' ? 4 : 0;
+
+                    const handleModeChange = (mode) => {
+                        playSound('click');
+                        setGameMode(mode);
+                    };
+
+                    const updatePlayer = (index, field, value) => {
+                        const newPlayers = [...formPlayers];
+                        newPlayers[index] = { ...newPlayers[index], [field]: value };
+                        setFormPlayers(newPlayers);
+                    };
+
+                    const handleStart = () => {
+                        let valid = true;
+                        for (let i = 0; i < numPlayers; i++) {
+                            if (!formPlayers[i].name.trim()) valid = false;
+                        }
+                        if (!valid) {
+                            alert("Mohon isi nama untuk semua pemain!");
+                            return;
+                        }
+                        
+                        const setupData = formPlayers.slice(0, numPlayers).map(p => ({
+                            name: p.name,
+                            avatar: AVATARS.find(a => a.id === p.avatarId)
+                        }));
+                        startGame(setupData);
+                    };
+
+                    return (
+                        <div className="flex flex-col h-full bg-gradient-to-br from-indigo-500 to-purple-600 p-4 md:p-8 overflow-hidden">
+                            <div className="max-w-6xl w-full mx-auto h-full flex flex-col">
+                                {!gameMode ? (
+                                    <button onClick={() => { playSound('click'); setView('home'); }} className="text-white font-bold mb-4 flex items-center gap-2 hover:text-indigo-200 shrink-0 w-max bg-black/20 px-4 py-2 rounded-lg backdrop-blur-sm transition">
+                                        ⬅️ KEMBALI KE HOME
+                                    </button>
+                                ) : (
+                                    <button onClick={() => { playSound('click'); setGameMode(null); }} className="text-white font-bold mb-4 flex items-center gap-2 hover:text-indigo-200 shrink-0 w-max bg-black/20 px-4 py-2 rounded-lg backdrop-blur-sm transition">
+                                        ⬅️ GANTI MODE
+                                    </button>
+                                )}
+                                
+                                {!gameMode ? (
+                                    <div className="flex-1 flex flex-col items-center justify-center w-full pb-10">
+                                        <h2 className="text-3xl md:text-5xl font-black text-white drop-shadow-md mb-8 flex items-center gap-3 text-center">
+                                            🎮 PILIH MODE PERMAINAN
+                                        </h2>
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-4xl">
+                                            {['SOLO', 'DUEL', 'SQUAD'].map(mode => (
+                                                <button 
+                                                    key={mode}
+                                                    onClick={() => handleModeChange(mode)}
+                                                    className="bg-white/10 border-4 border-white/20 text-white hover:bg-white/20 hover:border-white/40 hover:-translate-y-2 p-8 rounded-3xl font-black text-xl transition-all shadow-lg flex flex-col items-center justify-center gap-4 group"
+                                                >
+                                                    <span className="text-6xl md:text-7xl group-hover:scale-110 transition-transform drop-shadow-sm">{mode === 'SOLO' ? '👤' : mode === 'DUEL' ? '👥' : '👨‍👩‍👧‍👦'}</span>
+                                                    <div className="text-center mt-2">
+                                                        <div className="tracking-widest text-2xl mb-1">{mode}</div>
+                                                        <div className="text-base font-normal opacity-90">{mode === 'SOLO' ? '1 Pemain' : mode === 'DUEL' ? '2 Pemain Bergantian' : '4 Pemain Bergantian'}</div>
+                                                    </div>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="w-full bg-white rounded-3xl p-6 md:p-8 shadow-2xl flex flex-col min-h-0 relative flex-1">
+                                        <h3 className="text-2xl font-bold text-slate-800 mb-4 border-b pb-4 shrink-0 flex items-center gap-2">
+                                            📝 Registrasi Penjelajah <span className="text-indigo-600 bg-indigo-100 px-3 py-1 rounded-lg text-lg ml-2 font-black shadow-inner">Mode {gameMode}</span>
+                                        </h3>
+                                        
+                                        <div className="flex-1 overflow-y-auto pr-2 md:pr-4 space-y-6">
+                                            <div className={`grid gap-6 ${numPlayers > 1 ? 'md:grid-cols-2' : 'max-w-md mx-auto mt-4'}`}>
+                                                {Array.from({length: numPlayers}).map((_, i) => (
+                                                    <div key={i} className="bg-slate-50 p-4 md:p-6 rounded-2xl border-2 border-slate-200 shadow-sm flex flex-col transition-all hover:border-indigo-300 hover:shadow-md">
+                                                        <label className="block text-slate-700 font-bold mb-2">Pemain {i + 1} - Nama:</label>
+                                                        <input 
+                                                            type="text" 
+                                                            value={formPlayers[i].name}
+                                                            onChange={(e) => updatePlayer(i, 'name', e.target.value)}
+                                                            placeholder="Masukkan nama..." 
+                                                            className="w-full mb-5 px-4 py-3 rounded-xl border-2 border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition text-lg"
+                                                        />
+                                                        <label className="block text-slate-700 font-bold mb-3">Pilih Avatar:</label>
+                                                        <div className="grid grid-cols-4 gap-2 md:gap-3">
+                                                            {AVATARS.map(av => (
+                                                                <button 
+                                                                    key={av.id}
+                                                                    onClick={() => { playSound('click'); updatePlayer(i, 'avatarId', av.id); }}
+                                                                    className={`p-2 text-2xl md:text-3xl rounded-xl transition-all flex items-center justify-center aspect-square ${formPlayers[i].avatarId === av.id ? 'bg-indigo-500 text-white scale-110 shadow-lg ring-2 ring-indigo-300' : 'bg-white border-2 border-slate-200 hover:bg-slate-100 hover:scale-105'}`}
+                                                                    title={av.name}
+                                                                >
+                                                                    {av.icon}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        <button 
+                                            onClick={handleStart}
+                                            className="shrink-0 w-full mt-6 bg-green-500 hover:bg-green-400 text-white font-black py-4 md:py-5 rounded-2xl shadow-[0_6px_0_#15803d] active:shadow-[0_0px_0_#15803d] active:translate-y-1 transition-all text-xl md:text-2xl uppercase tracking-wider flex items-center justify-center gap-3">
+                                            🚀 Mulai Petualangan
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    );
+                }
+
+                if (view === 'game') {
+                    const handleAnswer = (playerIndex, selectedIndex) => {
+                        const updatedPlayers = [...players];
+                        const p = updatedPlayers[playerIndex];
+                        
+                        if (p.feedback || p.isFinished) return;
+                        
+                        const currentQ = p.questions[p.currentQIndex];
+                        const isCorrect = selectedIndex === currentQ.answer;
+                        
+                        if (isCorrect) {
+                            playSound('correct');
+                            triggerConfetti();
+                        } else {
+                            playSound('wrong');
+                        }
+
+                        p.feedback = { isCorrect, selectedIndex };
+                        setPlayers(updatedPlayers);
+                    };
+
+                    const handleNext = (playerIndex) => {
+                        playSound('click');
+                        const updatedPlayers = [...players];
+                        const p = updatedPlayers[playerIndex];
+                        
+                        if (p.feedback.isCorrect) {
+                            p.score += 100;
+                            p.correctCount++;
+                        } else {
+                            p.wrongCount++;
+                        }
+
+                        p.currentQIndex++;
+                        p.feedback = null;
+                        if (p.currentQIndex >= p.questions.length) {
+                            p.isFinished = true;
+                        }
+                        
+                        setPlayers(updatedPlayers);
+
+                        if (updatedPlayers.every(pl => pl.isFinished)) {
+                            setView('leaderboard');
+                        }
+                    };
+
+                    return (
+                        <div className="flex h-full w-full bg-slate-800 overflow-x-auto overflow-y-hidden">
+                            <div className={`flex h-full w-full ${players.length > 2 ? 'min-w-[1000px]' : players.length > 1 ? 'min-w-[600px]' : 'min-w-0'} md:min-w-0`}>
+                                {players.map((player, pIndex) => {
+                                    if (player.isFinished) {
+                                        return (
+                                            <div key={pIndex} className="flex-1 flex flex-col border-r last:border-r-0 border-slate-700 bg-slate-900 items-center justify-center p-4 relative text-center">
+                                                <div className="text-6xl mb-4 float-anim">{player.avatar.icon}</div>
+                                                <h3 className="text-xl md:text-2xl font-black text-green-400 mb-2">{player.name}<br/>Selesai!</h3>
+                                                <p className="text-slate-400 text-sm md:text-base animate-pulse">Menunggu pemain lain...</p>
+                                                <div className="mt-6 text-2xl font-black text-amber-500 bg-black/30 px-6 py-3 rounded-2xl">⭐ {player.score}</div>
+                                            </div>
+                                        );
+                                    }
+
+                                    const currentQ = player.questions[player.currentQIndex];
+                                    const progressPercent = ((player.currentQIndex) / 15) * 100;
+
+                                    return (
+                                        <div key={pIndex} className="flex-1 flex flex-col border-r last:border-r-0 border-slate-300 bg-slate-50 relative h-full">
+                                            
+                                            {/* Header Player */}
+                                            <div className="bg-white p-3 flex justify-between items-center shrink-0 shadow-sm border-b-4 border-indigo-500">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="text-2xl md:text-3xl bg-indigo-100 p-1.5 md:p-2 rounded-lg shadow-inner">{player.avatar.icon}</div>
+                                                    <div className="min-w-0 flex-1">
+                                                        <h3 className="font-black text-slate-800 text-xs md:text-sm leading-tight truncate">{player.name}</h3>
+                                                        <div className="text-[9px] md:text-[10px] font-bold text-indigo-500 tracking-wider">SOAL {player.currentQIndex + 1}/15</div>
+                                                    </div>
+                                                </div>
+                                                <div className="text-right shrink-0 ml-2">
+                                                    <div className="font-black text-sm md:text-base text-amber-500 drop-shadow-sm">⭐ {player.score}</div>
+                                                </div>
+                                            </div>
+                                            
+                                            {/* Progress Bar */}
+                                            <div className="w-full bg-slate-200 h-1.5 shrink-0">
+                                                <div className="bg-green-500 h-full transition-all duration-500 ease-out" style={{width: `${progressPercent}%`}}></div>
+                                            </div>
+
+                                            {/* Area Soal & Pilihan */}
+                                            <div className="p-3 md:p-4 flex-1 flex flex-col overflow-y-auto">
+                                                <div className="bg-white p-4 rounded-xl border-2 border-slate-100 shadow-sm mb-4 shrink-0">
+                                                    <h2 className="text-xs md:text-sm font-bold text-slate-800 text-center leading-snug">
+                                                        {currentQ.q}
+                                                    </h2>
+                                                </div>
+
+                                                <div className="flex flex-col gap-2 md:gap-3">
+                                                    {currentQ.options.map((opt, idx) => {
+                                                        let btnStyle = "bg-white text-slate-700 border-2 border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 shadow-sm";
+                                                        let icon = "";
+                                                        
+                                                        if (player.feedback) {
+                                                            if (idx === currentQ.answer) {
+                                                                btnStyle = "bg-green-100 text-green-800 border-2 border-green-500 shadow-md z-10"; 
+                                                                icon = "✅ ";
+                                                            } else if (idx === player.feedback.selectedIndex) {
+                                                                btnStyle = "bg-red-50 text-red-700 border-2 border-red-300 opacity-90"; 
+                                                                icon = "❌ ";
+                                                            } else {
+                                                                btnStyle = "bg-slate-100 text-slate-400 border-2 border-slate-200 opacity-60 grayscale"; 
+                                                            }
+                                                        }
+
+                                                        return (
+                                                            <button 
+                                                                key={idx}
+                                                                disabled={player.feedback !== null}
+                                                                onClick={() => handleAnswer(pIndex, idx)}
+                                                                className={`p-3 rounded-xl font-bold text-xs md:text-sm text-left transition-all flex items-start gap-2 group ${btnStyle}`}
+                                                            >
+                                                                <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 font-black text-[10px] shadow-inner ${player.feedback && idx === currentQ.answer ? 'bg-green-200 text-green-800' : 'bg-slate-100 text-slate-500 group-hover:bg-indigo-200 group-hover:text-indigo-800'}`}>
+                                                                    {['A', 'B', 'C', 'D'][idx]}
+                                                                </div>
+                                                                <span className="leading-snug">{icon}{opt}</span>
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+
+                                            {/* Overlay Pembahasan */}
+                                            {player.feedback && (
+                                                <div className="absolute inset-0 z-50 bg-black/40 backdrop-blur-sm flex flex-col justify-end animate-fade-in">
+                                                    <div className={`bg-white p-4 md:p-5 rounded-t-2xl shadow-2xl flex flex-col border-t-8 ${player.feedback.isCorrect ? 'border-green-500' : 'border-amber-500'} max-h-[90%]`}>
+                                                        <div className="flex items-center gap-2 mb-3 border-b pb-3 shrink-0">
+                                                            <div className="text-3xl md:text-4xl float-anim">{player.feedback.isCorrect ? '🎉' : '😊'}</div>
+                                                            <div>
+                                                                <h2 className={`text-base md:text-lg font-black ${player.feedback.isCorrect ? 'text-green-600' : 'text-amber-600'}`}>
+                                                                    {player.feedback.isCorrect ? 'BENAR!' : 'TETAP SEMANGAT!'}
+                                                                </h2>
+                                                                {player.feedback.isCorrect && <div className="text-[10px] md:text-xs font-bold text-amber-600 bg-amber-100 px-2 py-1 rounded inline-block mt-1 shadow-inner">+100 Poin</div>}
+                                                            </div>
+                                                        </div>
+                                                        
+                                                        <div className="overflow-y-auto mb-4 pr-1">
+                                                            {!player.feedback.isCorrect && (
+                                                                <div className="text-[10px] md:text-xs font-bold mb-2 text-slate-700">
+                                                                    Jawaban Benar: <span className="text-green-700 bg-green-100 px-1.5 py-0.5 rounded ml-1">{currentQ.options[currentQ.answer]}</span>
+                                                                </div>
+                                                            )}
+                                                            <p className="text-slate-600 text-[10px] md:text-xs leading-relaxed bg-slate-50 p-2 md:p-3 rounded-lg border border-slate-100">
+                                                                {currentQ.exp}
+                                                            </p>
+                                                        </div>
+                                                        
+                                                        <button 
+                                                            onClick={() => handleNext(pIndex)}
+                                                            className="shrink-0 w-full bg-indigo-500 hover:bg-indigo-400 text-white font-black py-2.5 md:py-3 rounded-xl shadow-[0_4px_0_#3730a3] active:translate-y-1 active:shadow-none transition-all text-xs md:text-sm flex justify-center items-center gap-2">
+                                                            <span>LANJUT MISI</span> ➡️
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    );
+                }
+
+                if (view === 'waiting') {
+                    const allFinished = players.every(p => p.isFinished);
+                    const nextPlayerIndex = players.findIndex(p => !p.isFinished);
+
+                    return (
+                        <div className="flex flex-col items-center justify-center h-full bg-slate-800 text-white p-4">
+                            <div className="glass-panel p-8 rounded-3xl w-full max-w-lg text-center text-slate-800">
+                                
+                                {players[currentPlayerIndex].isFinished && !allFinished && (
+                                    <div className="mb-6">
+                                        <div className="text-4xl mb-2">🎉</div>
+                                        <h2 className="text-2xl font-black text-green-600">Hebat! {players[currentPlayerIndex].name} telah menyelesaikan semua soal!</h2>
+                                    </div>
+                                )}
+
+                                <h2 className="text-2xl font-bold mb-6 text-slate-600">
+                                    {allFinished ? '🏁 SEMUA PEMAIN SELESAI!' : '⏳ STATUS PEMAIN'}
+                                </h2>
+
+                                <div className="space-y-3 mb-8">
+                                    {players.map((p, idx) => (
+                                        <div key={idx} className={`flex items-center justify-between p-4 rounded-xl border-2 ${p.isFinished ? 'bg-green-50 border-green-200' : 'bg-slate-50 border-slate-200'}`}>
+                                            <div className="flex items-center gap-3">
+                                                <span className="text-2xl">{p.avatar.icon}</span>
+                                                <span className="font-bold text-lg">{p.name}</span>
+                                            </div>
+                                            <div className="font-bold flex items-center gap-2">
+                                                {p.isFinished ? (
+                                                    <><span className="text-green-500">🟢 Selesai</span></>
+                                                ) : (
+                                                    <><span className="text-amber-500 animate-pulse">🟡 Menunggu giliran</span></>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {allFinished ? (
+                                    <button 
+                                        onClick={() => { playSound('click'); triggerConfetti(); setView('leaderboard'); }}
+                                        className="w-full bg-amber-400 hover:bg-amber-300 text-slate-800 font-black py-4 rounded-2xl shadow-[0_6px_0_#b45309] active:translate-y-1 active:shadow-none transition-all text-xl">
+                                        🏆 LIHAT LEADERBOARD
+                                    </button>
+                                ) : (
+                                    <button 
+                                        onClick={() => { playSound('click'); setCurrentPlayerIndex(nextPlayerIndex); setView('game'); }}
+                                        className="w-full bg-indigo-500 hover:bg-indigo-400 text-white font-black py-4 rounded-2xl shadow-[0_6px_0_#3730a3] active:translate-y-1 active:shadow-none transition-all text-xl">
+                                        MULAI GILIRAN {players[nextPlayerIndex].name} ➡️
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    );
+                }
+
+                if (view === 'leaderboard') {
+                    const sortedPlayers = [...players].sort((a, b) => {
+                        if (b.score !== a.score) return b.score - a.score;
+                        return b.correctCount - a.correctCount;
+                    });
+
+                    return (
+                        <div className="flex flex-col h-full bg-gradient-to-b from-indigo-900 to-purple-900 text-white p-4 overflow-y-auto">
+                            <div className="max-w-4xl w-full mx-auto py-8">
+                                
+                                <div className="text-center mb-10">
+                                    <h1 className="text-4xl md:text-5xl font-black text-amber-400 drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] mb-2">🏆 LEADERBOARD</h1>
+                                    <p className="text-xl text-indigo-200">Dunia Telah Selesai Dieksplorasi!</p>
+                                </div>
+
+                                <div className="flex justify-center items-end h-48 mb-12 gap-2 md:gap-4 px-2">
+                                    {/* 2nd Place */}
+                                    {sortedPlayers.length > 1 && (
+                                        <div className="flex flex-col items-center w-1/3 max-w-[120px]">
+                                            <div className="text-3xl mb-1">{sortedPlayers[1].avatar.icon}</div>
+                                            <div className="font-bold truncate w-full text-center">{sortedPlayers[1].name}</div>
+                                            <div className="bg-slate-300 w-full h-24 rounded-t-lg flex flex-col items-center justify-end pb-2 text-slate-800 font-black relative overflow-hidden">
+                                                <div className="absolute inset-0 bg-gradient-to-b from-white/40 to-transparent"></div>
+                                                🥈<br/>{sortedPlayers[1].score}
+                                            </div>
+                                        </div>
+                                    )}
+                                    
+                                    {/* 1st Place */}
+                                    <div className="flex flex-col items-center w-1/3 max-w-[140px] z-10">
+                                        <div className="text-5xl mb-2 float-anim">{sortedPlayers[0].avatar.icon}</div>
+                                        <div className="font-bold text-amber-300 truncate w-full text-center text-lg">{sortedPlayers[0].name}</div>
+                                        <div className="bg-amber-400 w-full h-32 rounded-t-lg flex flex-col items-center justify-end pb-2 text-amber-900 font-black text-xl relative overflow-hidden shadow-[0_0_20px_rgba(251,191,36,0.5)]">
+                                            <div className="absolute inset-0 bg-gradient-to-b from-white/50 to-transparent"></div>
+                                            🥇<br/>{sortedPlayers[0].score}
+                                        </div>
+                                    </div>
+
+                                    {/* 3rd Place */}
+                                    {sortedPlayers.length > 2 && (
+                                        <div className="flex flex-col items-center w-1/3 max-w-[120px]">
+                                            <div className="text-3xl mb-1">{sortedPlayers[2].avatar.icon}</div>
+                                            <div className="font-bold truncate w-full text-center">{sortedPlayers[2].name}</div>
+                                            <div className="bg-amber-700 w-full h-16 rounded-t-lg flex flex-col items-center justify-end pb-2 text-amber-100 font-black relative overflow-hidden">
+                                                <div className="absolute inset-0 bg-gradient-to-b from-white/20 to-transparent"></div>
+                                                🥉<br/>{sortedPlayers[2].score}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Full List Table */}
+                                <div className="bg-white/10 backdrop-blur-md rounded-3xl p-4 md:p-6 mb-8 border border-white/20">
+                                    <table className="w-full text-left">
+                                        <thead>
+                                            <tr className="text-indigo-200 border-b border-indigo-400/30">
+                                                <th className="p-3">Rank</th>
+                                                <th className="p-3">Penjelajah</th>
+                                                <th className="p-3 text-center">Benar</th>
+                                                <th className="p-3 text-center">Salah</th>
+                                                <th className="p-3 text-right">Skor</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {sortedPlayers.map((p, idx) => (
+                                                <tr key={idx} className="border-b border-indigo-400/10 hover:bg-white/5 transition">
+                                                    <td className="p-3 font-bold text-xl">
+                                                        {idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx+1}`}
+                                                    </td>
+                                                    <td className="p-3 flex items-center gap-3">
+                                                        <span className="text-2xl bg-white/10 p-2 rounded-lg">{p.avatar.icon}</span>
+                                                        <span className="font-bold text-lg">{p.name}</span>
+                                                    </td>
+                                                    <td className="p-3 text-center text-green-400 font-bold">{p.correctCount}</td>
+                                                    <td className="p-3 text-center text-red-400 font-bold">{p.wrongCount}</td>
+                                                    <td className="p-3 text-right font-black text-2xl text-amber-400">{p.score}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                                    <button onClick={() => { playSound('click'); setGameMode(null); setView('setup'); }} className="bg-indigo-500 hover:bg-indigo-400 text-white font-bold py-4 px-8 rounded-xl flex-1 text-center shadow-lg transition">
+                                        🔄 MAIN LAGI
+                                    </button>
+                                    <button onClick={() => { playSound('click'); setView('materi'); }} className="bg-amber-500 hover:bg-amber-400 text-slate-900 font-bold py-4 px-8 rounded-xl flex-1 text-center shadow-lg transition">
+                                        📚 PELAJARI MATERI
+                                    </button>
+                                    <button onClick={() => { playSound('click'); setView('home'); }} className="bg-white/20 hover:bg-white/30 text-white font-bold py-4 px-8 rounded-xl flex-1 text-center shadow-lg transition">
+                                        🏠 HOME
+                                    </button>
+                                </div>
+
+                            </div>
+                        </div>
+                    );
+                }
+
+                return null;
+            };
+
+            return (
+                <React.Fragment>
+                    <FloatingNav view={view} setView={setView} soundEnabled={soundEnabled} setSoundEnabled={setSoundEnabled} playSound={playSound} />
+                    {renderView()}
+                </React.Fragment>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
